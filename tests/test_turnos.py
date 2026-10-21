@@ -93,6 +93,23 @@ async def test_consulta_y_saca_turno_con_los_numeros_del_crm(respx_mock):
     # El resultado del alta llega al modelo con los números del CRM.
     resultado = json.loads(ctx.llm.calls[2]["messages"][-1]["content"])
     assert resultado["ok"] is True and resultado["turno"]["code"] == "A-4"
+    assert "pásale el código" in resultado["nota"]
+
+
+async def test_con_bienvenida_del_crm_no_repite_los_datos(respx_mock):
+    ctx = make_ctx()
+    ctx.profile = _Perfil(BusinessProfile(agent_name="Turnera", tools=frozenset({"turnos", "escalar"})))
+    mock_crm_basics(respx_mock)
+    respx_mock.post(f"{CRM_URL}/api/bot/turnos").mock(
+        return_value=httpx.Response(201, json={"turno": TURNO, "now": "15:00", "bienvenida": True})
+    )
+    ctx.llm.replies = [
+        LlmReply(content=None, tool_calls=[ToolCall(id="j", name="join_queue", arguments={"agenda_id": "qa_1"})]),
+        LlmReply(content="¡Listo! ¿Algo más?"),
+    ]
+    await _turno(ctx)
+    resultado = json.loads(ctx.llm.calls[1]["messages"][-1]["content"])
+    assert "NO los repitas" in resultado["nota"]
 
 
 async def test_un_409_vuelve_con_su_mensaje_y_el_turno_que_ya_tiene(respx_mock):

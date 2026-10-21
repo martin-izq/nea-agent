@@ -632,11 +632,16 @@ class ToolRuntime:
                 nombre = str(args.get("nombre") or "").strip() or None
                 data = await crm.sumar_turno(self._crm_conv_id, agenda_id, nombre)
                 self.turno_sacado = True
-                return {
-                    "ok": True,
-                    **data,
-                    "nota": "pásale el código, cuántos hay antes, la hora estimada y el link; dile que le avisas por aquí cuando falte poco",
-                }
+                # El CRM nuevo manda él mismo la bienvenida con los datos del
+                # turno: repetirlos es mandarle lo mismo dos veces.
+                nota = (
+                    "el CRM YA le mandó por este chat su número, cuántos hay antes, "
+                    "la hora estimada y el link: NO los repitas. Confirma en una "
+                    "frase corta y pregúntale si necesita algo más"
+                    if data.get("bienvenida")
+                    else "pásale el código, cuántos hay antes, la hora estimada y el link; dile que le avisas por aquí cuando falte poco"
+                )
+                return {"ok": True, **data, "nota": nota}
             turn_id = str(args.get("turn_id") or "").strip()
             if not turn_id:
                 return {"ok": False, "error": "falta_turno", "detalle": "llama queue_status y usa el id del turno"}
