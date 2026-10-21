@@ -287,6 +287,52 @@ class CrmClient:
         data: dict[str, Any] = resp.json()
         return data
 
+    # --- 039 — Turnos en vivo (`/api/bot/turnos`, bandera TURNOS del CRM) ---
+
+    async def get_turnos(self, conversation_id: str) -> dict[str, Any]:
+        """Las agendas de hoy con su espera y los turnos de este contacto."""
+        resp = await self._request(
+            "GET", "/api/bot/turnos", params={"conversationId": conversation_id}
+        )
+        if resp.status_code != 200:
+            raise CrmError(f"turnos devolvió {resp.status_code}")
+        data: dict[str, Any] = resp.json()
+        return data
+
+    async def sumar_turno(
+        self, conversation_id: str, agenda_id: str, nombre: str | None = None
+    ) -> dict[str, Any]:
+        """Saca turno para hoy. 409/404 tipados suben como `CrmConflict`
+        (`ya_tiene_turno`, `sin_fila`, `cerrada`, `sin_lugar`,
+        `agenda_inexistente`…): su mensaje es lo que el modelo le explica al
+        paciente."""
+        body: dict[str, Any] = {"conversationId": conversation_id, "agendaId": agenda_id}
+        if nombre:
+            body["name"] = nombre
+        resp = await self._request("POST", "/api/bot/turnos", json=body)
+        if resp.status_code in (404, 409) and _payload(resp).get("error"):
+            raise CrmConflict(_conflict_code(resp), _payload(resp))
+        if resp.status_code != 201:
+            raise CrmError(f"turnos devolvió {resp.status_code}")
+        data: dict[str, Any] = resp.json()
+        return data
+
+    async def accion_turno(
+        self, conversation_id: str, turn_id: str, action: str
+    ) -> dict[str, Any]:
+        """`cancel` o `confirm` sobre un turno de hoy del contacto."""
+        resp = await self._request(
+            "POST",
+            f"/api/bot/turnos/{turn_id}",
+            json={"conversationId": conversation_id, "action": action},
+        )
+        if resp.status_code in (404, 409) and _payload(resp).get("error"):
+            raise CrmConflict(_conflict_code(resp), _payload(resp))
+        if resp.status_code != 200:
+            raise CrmError(f"turno devolvió {resp.status_code}")
+        data: dict[str, Any] = resp.json()
+        return data
+
     async def post_handoff(self, conversation_id: str, reason: str | None = None) -> None:
         resp = await self._request(
             "POST",

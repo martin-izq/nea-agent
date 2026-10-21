@@ -201,6 +201,94 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 # contexto del turno trae `lead.nextStages` con algo (un CRM sin
 # `POST /api/bot/stage`, como cloud o un raíz anterior, no manda la llave), y
 # así el modelo no puede pedir una etapa que el CRM no le dio.
+# 039 — Turnos en vivo: la fila de HOY del CRM (bandera TURNOS). Solo se
+# enseñan si el perfil trae la clave «turnos» explícita: un CRM que no la
+# conoce no tiene `/api/bot/turnos`.
+TURNOS_SCHEMAS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "queue_status",
+            "description": (
+                "Consulta la fila de HOY: las agendas (con su id, cuánta gente "
+                "espera y la espera estimada) y los turnos de hoy de este "
+                "paciente (código, cuántas personas antes, hora estimada, link). "
+                "Llámala SIEMPRE antes de decir cuánto falta o de sacar turno: "
+                "los números salen de aquí, nunca los calcules tú."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "join_queue",
+            "description": (
+                "Saca turno para HOY en una agenda (su id sale de queue_status). "
+                "Solo cuando el paciente pidió atenderse hoy y quedó claro en "
+                "cuál agenda. Devuelve el código, cuántas personas hay antes, "
+                "la hora estimada y el link en vivo: pásale los cuatro."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agenda_id": {"type": "string"},
+                    "nombre": {
+                        "type": "string",
+                        "description": "Nombre del paciente si lo dijo; si no, se usa el del contacto",
+                    },
+                },
+                "required": ["agenda_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cancel_turn",
+            "description": (
+                "Cancela un turno de hoy del paciente SOLO después de que "
+                "confirmó explícitamente que quiere cancelarlo."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "turn_id": {"type": "string", "description": "id del turno, de queue_status"},
+                    "confirmation": {"type": "boolean"},
+                },
+                "required": ["turn_id", "confirmation"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "confirm_coming",
+            "description": (
+                "Registra que el paciente confirmó que viene a su turno de hoy "
+                "(responde «sí, voy» a la pregunta de si viene)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"turn_id": {"type": "string"}},
+                "required": ["turn_id"],
+            },
+        },
+    },
+]
+
+
+def turnos_encendidos(profile: Any) -> bool:
+    """¿El perfil trae «turnos» EXPLÍCITO? Sin la clave (CRM viejo, o
+    perfil sin `tools`) no: esa API puede no existir del otro lado."""
+    tools = getattr(profile, "tools", None)
+    return isinstance(tools, (list, tuple, set, frozenset)) and "turnos" in tools
+
+
+def con_turnos(schemas: list[dict[str, Any]], profile: Any) -> list[dict[str, Any]]:
+    return schemas + TURNOS_SCHEMAS if turnos_encendidos(profile) else schemas
+
+
 MOVE_STAGE_SCHEMA: dict[str, Any] = {
     "type": "function",
     "function": {
@@ -282,6 +370,10 @@ CLAVE_DE_HERRAMIENTA = {
     "reschedule_session": "reprogramar",
     "route_out": "salida",
     "handoff": "escalar",
+    "queue_status": "turnos",
+    "join_queue": "turnos",
+    "cancel_turn": "turnos",
+    "confirm_coming": "turnos",
 }
 
 
@@ -486,6 +578,7 @@ class ToolRuntime:
         self.routed_out = False
         self.proposed = False
         self.etapa_movida: str | None = None
+        self.turno_sacado = False
 
     async def execute(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -509,6 +602,8 @@ class ToolRuntime:
                 return await self._book_session(args)
             if name == "reschedule_session":
                 return await self._reschedule_session(args)
+            if name in ("queue_status", "join_queue", "cancel_turn", "confirm_coming"):
+                return await self._turnos(name, args)
             if name == "route_out":
                 return await self._route_out()
             if name == "handoff":
@@ -522,6 +617,39 @@ class ToolRuntime:
                 "error": "crm_error",
                 "detalle": "no pude completar la acción; continúa la conversación o haz handoff",
             }
+
+    async def _turnos(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """039 — La fila de hoy. Los números los calcula el CRM; aquí solo se
+        pasan. Un 409 tipado vuelve con su mensaje para explicarlo tal cual."""
+        crm = self._ctx.crm
+        try:
+            if name == "queue_status":
+                return {"ok": True, **await crm.get_turnos(self._crm_conv_id)}
+            if name == "join_queue":
+                agenda_id = str(args.get("agenda_id") or "").strip()
+                if not agenda_id:
+                    return {"ok": False, "error": "falta_agenda", "detalle": "llama queue_status y usa el id de la agenda"}
+                nombre = str(args.get("nombre") or "").strip() or None
+                data = await crm.sumar_turno(self._crm_conv_id, agenda_id, nombre)
+                self.turno_sacado = True
+                return {
+                    "ok": True,
+                    **data,
+                    "nota": "pásale el código, cuántos hay antes, la hora estimada y el link; dile que le avisas por aquí cuando falte poco",
+                }
+            turn_id = str(args.get("turn_id") or "").strip()
+            if not turn_id:
+                return {"ok": False, "error": "falta_turno", "detalle": "llama queue_status y usa el id del turno"}
+            if name == "cancel_turn":
+                if args.get("confirmation") is not True:
+                    return {"ok": False, "error": "confirmation_required"}
+                return {"ok": True, **await crm.accion_turno(self._crm_conv_id, turn_id, "cancel")}
+            return {"ok": True, **await crm.accion_turno(self._crm_conv_id, turn_id, "confirm")}
+        except CrmConflict as exc:
+            error = exc.payload.get("error")
+            detalle = error.get("message") if isinstance(error, dict) else None
+            extra = {k: v for k, v in exc.payload.items() if k != "error"}
+            return {"ok": False, "error": exc.code, "detalle": detalle or exc.code, **extra}
 
     async def _update_ficha(self, args: dict[str, Any]) -> dict[str, Any]:
         # Tolera el drift del LLM: manda lo que haya, el CRM normaliza flojo.

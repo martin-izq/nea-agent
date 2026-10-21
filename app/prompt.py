@@ -488,6 +488,25 @@ def build_system_prompt(
             "por un saludo, un «ok» o una duda suelta sin intención, ni a una "
             "etapa que ya pasó. Es interno: jamás se lo anuncies."
         )
+    # 039 — Turnos en vivo: la fila de HOY. Va solo con la clave «turnos»
+    # explícita en el perfil (el CRM la manda solo con su bandera encendida).
+    if "turnos" in (profile.tools or ()):
+        lines.append(
+            "- TURNOS DE HOY: este negocio también atiende por orden de llegada. "
+            "Si el paciente quiere atenderse HOY, o pregunta cuánto le falta, cómo "
+            "viene su turno o a qué hora lo atienden, llama queue_status y "
+            "contesta con ESOS números (código, cuántas personas hay antes, hora "
+            "estimada); nunca los inventes ni los calcules tú. Para sacar turno: "
+            "queue_status, la agenda que pidió (si hay más de una y no está "
+            "claro cuál, pregúntale), y join_queue en el mismo turno; después "
+            "pásale el código, cuántos hay antes, la hora estimada y el link. "
+            "Dile que por aquí le avisan cuando falte poco y cuando sea su "
+            "turno. Si ya tiene turno hoy, no saques otro: dale el que tiene. "
+            "Para cancelar su turno de hoy, confírmalo con él y llama "
+            "cancel_turn. Si dice que sí viene, confirm_coming. Un turno de hoy "
+            "(sin hora fija) NO es una cita: si pide otro día o una hora "
+            "puntual, eso es una cita con propose_slots."
+        )
     ficha = contact.get("ficha") or {}
     filled = {k: v for k, v in ficha.items() if v not in (None, "", [])}
     if filled:
