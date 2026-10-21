@@ -46,7 +46,7 @@ async def _turno(ctx, texto="hola, quiero atenderme hoy en clínica"):
 
 
 def test_las_herramientas_son_de_la_clave_turnos():
-    for nombre in ("queue_status", "join_queue", "cancel_turn", "confirm_coming"):
+    for nombre in ("queue_status", "queue_slots", "join_queue", "cancel_turn", "confirm_coming"):
         assert CLAVE_DE_HERRAMIENTA[nombre] == "turnos"
 
 
@@ -65,7 +65,7 @@ async def test_sin_la_clave_no_se_ensenan(respx_mock):
     ctx.llm.replies = [LlmReply(content="¡Hola!")]
     await _turno(ctx)
     assert not _nombres(ctx.llm.calls[0]["tools"]) & {"queue_status", "join_queue"}
-    assert "TURNOS DE HOY" not in ctx.llm.calls[0]["messages"][0]["content"]
+    assert "TURNOS:" not in ctx.llm.calls[0]["messages"][0]["content"]
 
 
 async def test_consulta_y_saca_turno_con_los_numeros_del_crm(respx_mock):
@@ -84,8 +84,8 @@ async def test_consulta_y_saca_turno_con_los_numeros_del_crm(respx_mock):
     await _turno(ctx)
 
     primera = ctx.llm.calls[0]
-    assert {"queue_status", "join_queue", "cancel_turn", "confirm_coming"} <= _nombres(primera["tools"])
-    assert "TURNOS DE HOY" in primera["messages"][0]["content"]
+    assert {"queue_status", "queue_slots", "join_queue", "cancel_turn", "confirm_coming"} <= _nombres(primera["tools"])
+    assert "TURNOS:" in primera["messages"][0]["content"]
     assert estado.calls.last.request.url.params["conversationId"] == CRM_CONV_ID
     assert json.loads(alta.calls.last.request.content) == {
         "conversationId": CRM_CONV_ID, "agendaId": "qa_1", "name": "Ana",
@@ -94,6 +94,8 @@ async def test_consulta_y_saca_turno_con_los_numeros_del_crm(respx_mock):
     resultado = json.loads(ctx.llm.calls[2]["messages"][-1]["content"])
     assert resultado["ok"] is True and resultado["turno"]["code"] == "A-4"
     assert "pásale el código" in resultado["nota"]
+    # El link no llega al modelo: no lo puede pegar.
+    assert "link" not in resultado["turno"]
 
 
 async def test_con_bienvenida_del_crm_no_repite_los_datos(respx_mock):
@@ -109,7 +111,29 @@ async def test_con_bienvenida_del_crm_no_repite_los_datos(respx_mock):
     ]
     await _turno(ctx)
     resultado = json.loads(ctx.llm.calls[1]["messages"][-1]["content"])
-    assert "NO los repitas" in resultado["nota"]
+    assert "NO lo repitas" in resultado["nota"]
+
+
+async def test_reserva_con_hora_de_queue_slots(respx_mock):
+    ctx = make_ctx()
+    ctx.profile = _Perfil(BusinessProfile(agent_name="Turnera", tools=frozenset({"turnos", "escalar"})))
+    mock_crm_basics(respx_mock)
+    huecos = respx_mock.get(f"{CRM_URL}/api/bot/turnos/huecos").mock(
+        return_value=httpx.Response(200, json={"agenda": {"id": "qa_dj"}, "date": "2026-10-23", "huecos": [
+            {"startUtc": "2026-10-23T13:00:00.000Z", "day": "2026-10-23", "dayLabel": "viernes 23/10", "time": "10:00"},
+        ]})
+    )
+    alta = respx_mock.post(f"{CRM_URL}/api/bot/turnos").mock(
+        return_value=httpx.Response(201, json={"turno": {"id": "tn_9", "code": "DJ-1", "time": "10:00", "link": "x"}, "bienvenida": True})
+    )
+    ctx.llm.replies = [
+        LlmReply(content=None, tool_calls=[ToolCall(id="h", name="queue_slots", arguments={"agenda_id": "qa_dj", "fecha": "2026-10-23"})]),
+        LlmReply(content=None, tool_calls=[ToolCall(id="j", name="join_queue", arguments={"agenda_id": "qa_dj", "start_utc": "2026-10-23T13:00:00.000Z"})]),
+        LlmReply(content="¡Listo!"),
+    ]
+    await _turno(ctx, "quiero turno con el dr juarez el viernes a las 10")
+    assert huecos.calls.last.request.url.params["date"] == "2026-10-23"
+    assert json.loads(alta.calls.last.request.content)["startUtc"] == "2026-10-23T13:00:00.000Z"
 
 
 async def test_un_409_vuelve_con_su_mensaje_y_el_turno_que_ya_tiene(respx_mock):

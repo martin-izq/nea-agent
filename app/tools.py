@@ -222,17 +222,45 @@ TURNOS_SCHEMAS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "join_queue",
+            "name": "queue_slots",
             "description": (
-                "Saca turno para HOY en una agenda (su id sale de queue_status). "
-                "Solo cuando el paciente pidió atenderse hoy y quedó claro en "
-                "cuál agenda. Devuelve el código, cuántas personas hay antes, "
-                "la hora estimada y el link en vivo: pásale los cuatro."
+                "Horarios libres para RESERVAR un turno con hora en una agenda que "
+                "toma reservas (`reservas: true` en queue_status). Con fecha, "
+                "todos los de ese día; sin fecha, unos de los próximos días. "
+                "Solo se puede reservar un start_utc que venga de aquí."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "agenda_id": {"type": "string"},
+                    "fecha": {
+                        "type": "string",
+                        "description": "AAAA-MM-DD, solo si el paciente nombró un día",
+                    },
+                },
+                "required": ["agenda_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "join_queue",
+            "description": (
+                "Saca el turno. Sin start_utc: a la fila de HOY por orden de "
+                "llegada (agendas con `walkIn: true`). Con start_utc: reserva ESE "
+                "horario (exacto, de queue_slots) en una agenda con `reservas: "
+                "true`, hoy u otro día; úsalo solo después de que el paciente "
+                "eligió la hora. El id de la agenda sale de queue_status."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agenda_id": {"type": "string"},
+                    "start_utc": {
+                        "type": "string",
+                        "description": "Para reservar con hora: el start_utc exacto de un hueco de queue_slots",
+                    },
                     "nombre": {
                         "type": "string",
                         "description": "Nombre del paciente si lo dijo; si no, se usa el del contacto",
@@ -276,6 +304,16 @@ TURNOS_SCHEMAS: list[dict[str, Any]] = [
         },
     },
 ]
+
+
+def _sin_links(data: Any) -> Any:
+    """El link en vivo del turno no se le pasa al modelo: el negocio no quiere
+    mandarlo por el chat, y lo que el modelo no ve no lo puede pegar."""
+    if isinstance(data, dict):
+        return {k: _sin_links(v) for k, v in data.items() if k != "link"}
+    if isinstance(data, list):
+        return [_sin_links(v) for v in data]
+    return data
 
 
 def turnos_encendidos(profile: Any) -> bool:
@@ -371,6 +409,7 @@ CLAVE_DE_HERRAMIENTA = {
     "route_out": "salida",
     "handoff": "escalar",
     "queue_status": "turnos",
+    "queue_slots": "turnos",
     "join_queue": "turnos",
     "cancel_turn": "turnos",
     "confirm_coming": "turnos",
@@ -602,7 +641,7 @@ class ToolRuntime:
                 return await self._book_session(args)
             if name == "reschedule_session":
                 return await self._reschedule_session(args)
-            if name in ("queue_status", "join_queue", "cancel_turn", "confirm_coming"):
+            if name in ("queue_status", "queue_slots", "join_queue", "cancel_turn", "confirm_coming"):
                 return await self._turnos(name, args)
             if name == "route_out":
                 return await self._route_out()
@@ -624,22 +663,32 @@ class ToolRuntime:
         crm = self._ctx.crm
         try:
             if name == "queue_status":
-                return {"ok": True, **await crm.get_turnos(self._crm_conv_id)}
+                return {"ok": True, **_sin_links(await crm.get_turnos(self._crm_conv_id))}
+            if name == "queue_slots":
+                agenda_id = str(args.get("agenda_id") or "").strip()
+                if not agenda_id:
+                    return {"ok": False, "error": "falta_agenda", "detalle": "llama queue_status y usa el id de la agenda"}
+                fecha = _fecha_pedida(args.get("fecha"))
+                data = await crm.huecos_turnos(self._crm_conv_id, agenda_id, fecha)
+                if not data.get("huecos"):
+                    return {"ok": True, **data, "nota": "no hay horarios libres: díselo y ofrece otro día"}
+                return {"ok": True, **data}
             if name == "join_queue":
                 agenda_id = str(args.get("agenda_id") or "").strip()
                 if not agenda_id:
                     return {"ok": False, "error": "falta_agenda", "detalle": "llama queue_status y usa el id de la agenda"}
                 nombre = str(args.get("nombre") or "").strip() or None
-                data = await crm.sumar_turno(self._crm_conv_id, agenda_id, nombre)
+                start_utc = str(args.get("start_utc") or "").strip() or None
+                data = _sin_links(await crm.sumar_turno(self._crm_conv_id, agenda_id, nombre, start_utc))
                 self.turno_sacado = True
                 # El CRM nuevo manda él mismo la bienvenida con los datos del
                 # turno: repetirlos es mandarle lo mismo dos veces.
                 nota = (
-                    "el CRM YA le mandó por este chat su número, cuántos hay antes, "
-                    "la hora estimada y el link: NO los repitas. Confirma en una "
-                    "frase corta y pregúntale si necesita algo más"
+                    "el CRM YA le mandó por este chat el detalle del turno (día, "
+                    "hora, número): NO lo repitas. Confirma en una frase corta y "
+                    "pregúntale si necesita algo más"
                     if data.get("bienvenida")
-                    else "pásale el código, cuántos hay antes, la hora estimada y el link; dile que le avisas por aquí cuando falte poco"
+                    else "pásale el código y la hora; dile que le avisas por aquí cuando falte poco"
                 )
                 return {"ok": True, **data, "nota": nota}
             turn_id = str(args.get("turn_id") or "").strip()
@@ -654,7 +703,7 @@ class ToolRuntime:
             error = exc.payload.get("error")
             detalle = error.get("message") if isinstance(error, dict) else None
             extra = {k: v for k, v in exc.payload.items() if k != "error"}
-            return {"ok": False, "error": exc.code, "detalle": detalle or exc.code, **extra}
+            return {"ok": False, "error": exc.code, "detalle": detalle or exc.code, **_sin_links(extra)}
 
     async def _update_ficha(self, args: dict[str, Any]) -> dict[str, Any]:
         # Tolera el drift del LLM: manda lo que haya, el CRM normaliza flojo.

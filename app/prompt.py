@@ -492,19 +492,22 @@ def build_system_prompt(
     # explícita en el perfil (el CRM la manda solo con su bandera encendida).
     if "turnos" in (profile.tools or ()):
         lines.append(
-            "- TURNOS DE HOY: este negocio también atiende por orden de llegada. "
-            "Si el paciente quiere atenderse HOY, o pregunta cuánto le falta, cómo "
-            "viene su turno o a qué hora lo atienden, llama queue_status y "
-            "contesta con ESOS números (código, cuántas personas hay antes, hora "
-            "estimada); nunca los inventes ni los calcules tú. Para sacar turno: "
-            "queue_status, la agenda que pidió (si hay más de una y no está "
-            "claro cuál, pregúntale), y join_queue en el mismo turno; después "
-            "sigue la nota que trae su resultado (si el CRM ya le mandó los "
-            "datos del turno, no los repitas). Si ya tiene turno hoy, no saques otro: dale el que tiene. "
-            "Para cancelar su turno de hoy, confírmalo con él y llama "
-            "cancel_turn. Si dice que sí viene, confirm_coming. Un turno de hoy "
-            "(sin hora fija) NO es una cita: si pide otro día o una hora "
-            "puntual, eso es una cita con propose_slots."
+            "- TURNOS: los turnos se sacan con queue_status, queue_slots y "
+            "join_queue (NO con propose_slots ni book_session). queue_status "
+            "lista las agendas: `walkIn` = atiende hoy por orden de llegada; "
+            "`reservas` = toma turnos con hora, hoy u otro día. Si el paciente "
+            "quiere venir hoy sin hora, join_queue sin start_utc. Si pide una "
+            "hora puntual u otro día, en una agenda con reservas: queue_slots "
+            "(con fecha si nombró un día), ofrécele hasta 3 horarios tal cual "
+            "vienen, y cuando elija, join_queue con ESE start_utc. Si la agenda "
+            "no toma reservas o no hay horario, díselo derecho y ofrécele lo que "
+            "sí hay; nunca le confirmes una hora que no salió de queue_slots. Si "
+            "no está claro con qué agenda, pregúntale. Cuánto falta, a qué hora "
+            "lo atienden: queue_status y ESOS números, nunca los calcules tú. "
+            "Después de join_queue sigue la nota del resultado (si el CRM ya le "
+            "mandó el detalle, no lo repitas). Si ya tiene turno ese día, no "
+            "saques otro. Para cancelar, confírmalo y cancel_turn. Si dice que "
+            "sí viene, confirm_coming. No mandes links."
         )
     ficha = contact.get("ficha") or {}
     filled = {k: v for k, v in ficha.items() if v not in (None, "", [])}

@@ -299,8 +299,27 @@ class CrmClient:
         data: dict[str, Any] = resp.json()
         return data
 
+    async def huecos_turnos(
+        self, conversation_id: str, agenda_id: str, fecha: str | None = None
+    ) -> dict[str, Any]:
+        """Horarios libres para reservar con una agenda (`/api/bot/turnos/huecos`)."""
+        params = {"conversationId": conversation_id, "agendaId": agenda_id}
+        if fecha:
+            params["date"] = fecha
+        resp = await self._request("GET", "/api/bot/turnos/huecos", params=params)
+        if resp.status_code in (404, 409, 422) and _payload(resp).get("error"):
+            raise CrmConflict(_conflict_code(resp), _payload(resp))
+        if resp.status_code != 200:
+            raise CrmError(f"huecos devolvió {resp.status_code}")
+        data: dict[str, Any] = resp.json()
+        return data
+
     async def sumar_turno(
-        self, conversation_id: str, agenda_id: str, nombre: str | None = None
+        self,
+        conversation_id: str,
+        agenda_id: str,
+        nombre: str | None = None,
+        start_utc: str | None = None,
     ) -> dict[str, Any]:
         """Saca turno para hoy. 409/404 tipados suben como `CrmConflict`
         (`ya_tiene_turno`, `sin_fila`, `cerrada`, `sin_lugar`,
@@ -309,6 +328,8 @@ class CrmClient:
         body: dict[str, Any] = {"conversationId": conversation_id, "agendaId": agenda_id}
         if nombre:
             body["name"] = nombre
+        if start_utc:
+            body["startUtc"] = start_utc
         resp = await self._request("POST", "/api/bot/turnos", json=body)
         if resp.status_code in (404, 409) and _payload(resp).get("error"):
             raise CrmConflict(_conflict_code(resp), _payload(resp))
