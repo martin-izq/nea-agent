@@ -755,6 +755,7 @@ async def _tool_loop(
                             "name": tc.name,
                             "arguments": json.dumps(tc.arguments, ensure_ascii=False),
                         },
+                        **({"extra_content": tc.extra_content} if tc.extra_content else {}),
                     }
                     for tc in reply.tool_calls
                 ],

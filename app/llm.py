@@ -32,6 +32,10 @@ class ToolCall:
     id: str
     name: str
     arguments: dict[str, Any]
+    # Lo que el proveedor cuelga de la llamada fuera del contrato de OpenAI y
+    # exige de vuelta en el historial: Gemini 3 manda ahí su thought_signature
+    # y sin ella rechaza el turno siguiente con 400.
+    extra_content: dict[str, Any] | None = None
 
 
 @dataclass
@@ -338,7 +342,12 @@ class OpenAiLlm:
                 logger.warning("llm: arguments malformados en %s — uso {}", name)
                 args = {}
             tool_calls.append(
-                ToolCall(id=getattr(tc, "id", "") or "", name=name, arguments=args)
+                ToolCall(
+                    id=getattr(tc, "id", "") or "",
+                    name=name,
+                    arguments=args,
+                    extra_content=(getattr(tc, "model_extra", None) or {}).get("extra_content"),
+                )
             )
         return LlmReply(content=content, tool_calls=tool_calls)
 

@@ -182,3 +182,18 @@ async def test_si_la_segunda_tambien_sale_mal_silencio_y_handoff(ctx, client, re
     assert routes["messages"].call_count == 0
     assert routes["handoff"].call_count == 1
     assert json.loads(routes["handoff"].calls[0].request.content)["reason"] == "error"
+
+
+def test_extra_content_del_proveedor_vuelve_en_el_historial():
+    # Gemini 3 cuelga su thought_signature en extra_content y la exige de vuelta.
+    from types import SimpleNamespace
+    from app.llm import OpenAiLlm
+
+    tc = SimpleNamespace(
+        id="c1",
+        function=SimpleNamespace(name="handoff", arguments="{}"),
+        model_extra={"extra_content": {"google": {"thought_signature": "sig"}}},
+    )
+    msg = SimpleNamespace(content=None, tool_calls=[tc])
+    reply = OpenAiLlm._parse(SimpleNamespace(choices=[SimpleNamespace(message=msg)]))
+    assert reply.tool_calls[0].extra_content == {"google": {"thought_signature": "sig"}}
