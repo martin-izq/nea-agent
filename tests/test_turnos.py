@@ -93,7 +93,7 @@ async def test_consulta_y_saca_turno_con_los_numeros_del_crm(respx_mock):
     # El resultado del alta llega al modelo con los números del CRM.
     resultado = json.loads(ctx.llm.calls[2]["messages"][-1]["content"])
     assert resultado["ok"] is True and resultado["turno"]["code"] == "A-4"
-    assert "pásale el código" in resultado["nota"]
+    assert "confírmale TÚ" in resultado["nota"]
     # El link no llega al modelo: no lo puede pegar.
     assert "link" not in resultado["turno"]
 

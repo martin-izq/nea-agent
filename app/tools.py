@@ -688,7 +688,12 @@ class ToolRuntime:
                     "hora, número): NO lo repitas. Confirma en una frase corta y "
                     "pregúntale si necesita algo más"
                     if data.get("bienvenida")
-                    else "pásale el código y la hora; dile que le avisas por aquí cuando falte poco"
+                    else (
+                        "confírmale TÚ, en un solo mensaje y sin volver a saludar: "
+                        "su número, el día y la hora (si es hoy, también cuántas "
+                        "personas hay antes y la hora estimada), y que por aquí le "
+                        "avisas cuando falte poco"
+                    )
                 )
                 return {"ok": True, **data, "nota": nota}
             turn_id = str(args.get("turn_id") or "").strip()
