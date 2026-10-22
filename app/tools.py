@@ -210,8 +210,9 @@ TURNOS_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "queue_status",
             "description": (
-                "Consulta la fila de HOY: las agendas (con su id, cuánta gente "
-                "espera y la espera estimada) y los turnos de hoy de este "
+                "Consulta la fila de HOY: las agendas (con su id, especialidad, "
+                "cuánta gente espera, la espera estimada y el primer horario "
+                "libre para reservar) y los turnos de hoy de este "
                 "paciente (código, cuántas personas antes, hora estimada, link). "
                 "Llámala SIEMPRE antes de decir cuánto falta o de sacar turno: "
                 "los números salen de aquí, nunca los calcules tú."
